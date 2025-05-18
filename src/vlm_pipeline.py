@@ -414,7 +414,7 @@ def main():
         print(f"Could not create dummy image: {e}")
 
 
-    image_url = "http://images.cocodataset.org/val2017/00000003gv  9769.jpg" # A cat image
+    image_url = "http://images.cocodataset.org/val2017/000000039769.jpg" # A cat image
     local_image_path = "dummy_image.jpg" # Use the dummy image created
 
     # Use the loaded model (either original VLM or potentially fine-tuned LLM part)
