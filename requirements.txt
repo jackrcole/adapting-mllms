@@ -1,0 +1,9 @@
+torch
+transformers
+datasets
+unsloth
+wandb
+accelerate
+Pillow
+bitsandbytes
+trl
