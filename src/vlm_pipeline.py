@@ -12,8 +12,14 @@ import requests
 WANDB_PROJECT_NAME = "adapting-mllms"
 MODEL_NAME = "unsloth/gemma-3-4b-it" 
 
-OUTPUT_DIR = "../results/model_output"
-LOGGING_DIR = "../results/logs"
+# Use different base directories depending on environment
+if "COLAB_" not in "".join(os.environ.keys()):
+    BASE_DIR = ".."
+else:
+    BASE_DIR = "/content"
+
+OUTPUT_DIR = f"{BASE_DIR}/{MODEL_NAME}"
+LOGGING_DIR = f"{BASE_DIR}/logs/{MODEL_NAME}"
 
 # --- Helper Functions ---
 
@@ -66,20 +72,22 @@ def load_model_and_tokenizer_unsloth(model_name, max_seq_length=2048, use_gradie
         load_in_4bit=True, # Example: Use 4-bit quantization
     )
     
-    # Optional: Apply LoRA configuration if planning to fine-tune with LoRA
     model = FastVisionModel.get_peft_model(
         model,
-        r=16, # LoRA rank
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"], # Adjust for your model
-        lora_alpha=16,
-        lora_dropout=0,
-        bias="none",
-        use_gradient_checkpointing=use_gradient_checkpointing,
-        random_state=42,
-        # use_rslora=False,  # RoPE Scaling LoRA
-        # loftq_config=None, # LoftQ
+        finetune_vision_layers     = True, # False if not finetuning vision layers
+        finetune_language_layers   = True, # False if not finetuning language layers
+        finetune_attention_modules = True, # False if not finetuning attention layers
+        finetune_mlp_modules       = True, # False if not finetuning MLP layers
+
+        r = 16,           # The larger, the higher the accuracy, but might overfit
+        lora_alpha = 16,  # Recommended alpha == r at least
+        lora_dropout = 0,
+        bias = "none",
+        random_state = 3407,
+        use_rslora = False,  # We support rank stabilized LoRA
+        loftq_config = None, # And LoftQ
     )
+
     print("Unsloth model and tokenizer loaded and prepared for PEFT.")
     return model, tokenizer
 
@@ -166,7 +174,7 @@ def fine_tune_model(model, tokenizer, train_dataset, eval_dataset=None):
             per_device_train_batch_size=2,
             gradient_accumulation_steps=4,
             warmup_steps=10,
-            # max_steps=60, # Enable for quick test, comment out for full training
+            max_steps=60, # Enable for quick test, comment out for full training
             num_train_epochs=1, # Adjust as needed
             learning_rate=2e-4,
             fp16=not torch.cuda.is_bf16_supported(), # Use bf16 if available, else fp16
@@ -325,29 +333,29 @@ def main():
     
     # Using AutoModel for flexibility, but might need specific model class for full VLM features.
     # The MODEL_NAME Salesforce/blip-image-captioning-base is actually a BlipForConditionalGeneration model.
-    from transformers import BlipForConditionalGeneration, BlipProcessor
-    try:
-        print(f"Attempting to load VLM: {MODEL_NAME} with specific classes.")
-        model = BlipForConditionalGeneration.from_pretrained(MODEL_NAME, torch_dtype=torch.float16).to("cuda" if torch.cuda.is_available() else "cpu")
-        # Tokenizer for BLIP is usually part of the BlipProcessor
-        # For inference/finetuning, the processor handles image and text preparation.
-        # For SFTTrainer with text only, we might just need the text tokenizer part.
-        # For now, we'll load a general tokenizer, and the inference fn will try to load BlipProcessor
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME) # For text part
-        print(f"Successfully loaded {MODEL_NAME} and its tokenizer.")
-    except Exception as e:
-        print(f"Could not load {MODEL_NAME} with BlipForConditionalGeneration. Error: {e}")
-        print("Falling back to AutoModelForCausalLM. Full VLM capabilities might be limited.")
-        # Fallback or for LLM-focused approach
-        quant_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16) if torch.cuda.is_available() else None
-        model, tokenizer = load_model_and_tokenizer_hf(MODEL_NAME, quantization_config=quant_config)
-        if torch.cuda.is_available():
-            model = model.to("cuda")
+    # from transformers import BlipForConditionalGeneration, BlipProcessor
+    # try:
+    #     print(f"Attempting to load VLM: {MODEL_NAME} with specific classes.")
+    #     model = BlipForConditionalGeneration.from_pretrained(MODEL_NAME, torch_dtype=torch.float16).to("cuda" if torch.cuda.is_available() else "cpu")
+    #     # Tokenizer for BLIP is usually part of the BlipProcessor
+    #     # For inference/finetuning, the processor handles image and text preparation.
+    #     # For SFTTrainer with text only, we might just need the text tokenizer part.
+    #     # For now, we'll load a general tokenizer, and the inference fn will try to load BlipProcessor
+    #     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME) # For text part
+    #     print(f"Successfully loaded {MODEL_NAME} and its tokenizer.")
+    # except Exception as e:
+    #     print(f"Could not load {MODEL_NAME} with BlipForConditionalGeneration. Error: {e}")
+    #     print("Falling back to AutoModelForCausalLM. Full VLM capabilities might be limited.")
+    #     # Fallback or for LLM-focused approach
+    #     quant_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16) if torch.cuda.is_available() else None
+    #     model, tokenizer = load_model_and_tokenizer_hf(MODEL_NAME, quantization_config=quant_config)
+    #     if torch.cuda.is_available():
+    #         model = model.to("cuda")
 
 
     # Option B: Unsloth (primarily for LLMs or language component of VLMs)
-    # unsloth_model_name = "unsloth/llama-3-8b-bnb-4bit" # Example Unsloth model
-    # model, tokenizer = load_model_and_tokenizer_unsloth(unsloth_model_name)
+    unsloth_model_name = "unsloth/llama-3-8b-bnb-4bit" # Example Unsloth model
+    model, tokenizer = load_model_and_tokenizer_unsloth(unsloth_model_name)
     # Note: If using Unsloth, ensure the dataset and fine-tuning are compatible.
     # The current `prepare_dataset_placeholder` and `fine_tune_model` use SFTTrainer,
     # which is text-based. For full VLM fine-tuning, this would differ.
